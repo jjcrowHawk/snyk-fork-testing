@@ -1,0 +1,56 @@
+name: Snyk Security Scan                                                                                                                                                                           
+                                                                                                                                                                                                   
+on:                                                                                                                                                                                                
+  pull_request:                                                                                                                                                                                    
+    branches:
+      - main                                                                                                                                                                           
+                                                                                                                                                                                                   
+jobs:                                                                                                                                                                                              
+  security:                                                                                                                                                                                  
+    name: Snyk Security Scan
+    runs-on: ubuntu-latest                                                                                                                                                                         
+    steps:                                                                                                                                                                                         
+      - name: Checkout repository
+        uses: actions/checkout@v4                                                                                                                                                                  
+                                                                                                                                                                              
+      - name: Run Snyk to check for vulnerabilities                                                                                                                                                
+        uses: snyk/actions/node@master                                                                                                                                                             
+        env:                                                                                                                                                                                       
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}                                                                                                                                                    
+        with:                                                                                                                                                                                      
+          args: --severity-threshold=high --json > snyk-results.json
+     
+      - name: Process Snyk results
+        if: ${{ failure() || steps.snyk.outcome == 'failure' }}
+        id: process
+        run: |
+            echo "SNYK_RESULT<<EOF" >> $GITHUB_ENV
+            cat snyk-results.json | jq -r '.vulnerabilities[] | select(.severity == "high") | "- **\(.title)** (\(.severity) severity) in **\(.packageName)@\(.version)** (fix: \(.fixedIn[0] // "not available"))"' >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+            
+            # Add the summary for vulnerabilities count
+            echo "VULN_SUMMARY<<EOF" >> $GITHUB_ENV
+            echo "Found $(cat snyk-results.json | jq '[.vulnerabilities[] | select(.severity == "high")] | length') critical vulnerabilities:" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+  
+      - name: Comment on PR
+        if: ${{ failure() || steps.snyk.outcome == 'failure' }}
+        uses: actions/github-script@v7
+        with:
+            script: |
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## ⚠️ Security Vulnerabilities Detected! ⚠️
+  
+              Snyk has identified critical vulnerabilities in your dependencies.
+              
+              ### Summary
+              ${{ env.VULN_SUMMARY }}
+              
+              ### Details
+              ${{ env.SNYK_RESULT }}
+              
+              Please address these issues before merging this PR.`
+              })
